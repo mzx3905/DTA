@@ -2,7 +2,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-
 class StableSparseGatedCrossAttention(nn.Module):
     def __init__(
         self,
@@ -14,7 +13,7 @@ class StableSparseGatedCrossAttention(nn.Module):
         init_alpha=1.0,
     ):
         super().__init__()
-
+        self.hidden_dim = hidden_dim
         self.drug_proj = nn.Linear(drug_dim, hidden_dim)
         self.prot_proj = nn.Linear(prot_dim, hidden_dim)
 
@@ -33,11 +32,9 @@ class StableSparseGatedCrossAttention(nn.Module):
             nn.Linear(hidden_dim, hidden_dim),
             nn.Sigmoid()
         )
-
         self.norm = nn.LayerNorm(hidden_dim)
 
     def forward(self, drug_feat, drug_mask, prot_feat, prot_mask):
-
         Q = self.drug_proj(drug_feat)
         K = self.prot_proj(prot_feat)
         V = K
@@ -50,7 +47,6 @@ class StableSparseGatedCrossAttention(nn.Module):
 
         alpha = torch.clamp(self.alpha, 0.0, 5.0)
         scaling = 1.0 + alpha * site_prob
-
         V_enhanced = V * scaling
 
         attn_out, _ = self.attn(
@@ -60,7 +56,6 @@ class StableSparseGatedCrossAttention(nn.Module):
 
         gate = self.gate(attn_out)
         out = gate * attn_out + Q
-
         out = self.norm(out)
 
         return out, drug_mask
