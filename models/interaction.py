@@ -40,19 +40,23 @@ class LigandAwareCrossAttention(nn.Module):
 
     def forward(self, drug_feat, drug_mask, prot_feat, prot_mask):
         Q = self.drug_proj(drug_feat)
-        K = self.prot_proj(prot_feat)
+        K = self.prot_proj(prot_feat) # [B, L, 128]
         V = K
 
-        # 🔥 核心修正：让药物 (Q) 去主动寻找靶点 (K/V)
-        # 注意力权重 attn_weights 本身就是最完美的、基于配体的 site_prob！
         attn_out, attn_weights = self.attn(
             Q, K, V,
             key_padding_mask=~prot_mask
         )
 
-        # 基于交互后产生的特征进行门控融合，彻底废除静态 site_scorer
         gate = self.gate(attn_out)
         out = gate * attn_out + Q
         out = self.norm(out)
 
-        return out, drug_mask
+        # 🔥 绝杀修复：提取蛋白质全局身份特征，别再把它扔了！
+        # 排除 Padding 噪音，只对有效氨基酸求均值
+        K_masked = K.masked_fill(~prot_mask.unsqueeze(-1), 0.0)
+        valid_lens = prot_mask.sum(dim=1, keepdim=True).clamp(min=1.0)
+        global_prot = K_masked.sum(dim=1) / valid_lens # [B, 128]
+
+        # 返回三个参数！
+        return out, drug_mask, global_prot
