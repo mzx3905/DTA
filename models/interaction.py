@@ -2,32 +2,36 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-class StableSparseGatedCrossAttention(nn.Module):
+
+class LigandAwareCrossAttention(nn.Module):
     def __init__(
-        self,
-        drug_dim=128,
-        prot_dim=1280,
-        hidden_dim=128,
-        heads=4,
-        init_tau=0.5,
-        init_alpha=1.0,
+            self,
+            drug_dim=128,
+            prot_dim=1280,
+            hidden_dim=128,
+            heads=4,
     ):
         super().__init__()
         self.hidden_dim = hidden_dim
-        self.drug_proj = nn.Linear(drug_dim, hidden_dim)
-        self.prot_proj = nn.Linear(prot_dim, hidden_dim)
 
-        self.attn = nn.MultiheadAttention(hidden_dim, heads, batch_first=True)
-
-        self.site_scorer = nn.Sequential(
-            nn.Linear(prot_dim, hidden_dim),
+        # 1. 强制模态对齐（绝对不能删）
+        self.prot_proj = nn.Sequential(
+            nn.Linear(prot_dim, 512),
             nn.GELU(),
-            nn.Linear(hidden_dim, 1)
+            nn.Dropout(0.3),  # 暖启动更是必须防死记硬背
+            nn.Linear(512, hidden_dim),
+            nn.LayerNorm(hidden_dim)
         )
 
-        self.tau = nn.Parameter(torch.tensor(init_tau))
-        self.alpha = nn.Parameter(torch.tensor(init_alpha))
+        self.drug_proj = nn.Sequential(
+            nn.Linear(drug_dim, hidden_dim),
+            nn.LayerNorm(hidden_dim)
+        )
 
+        # 2. 交叉注意力：自带配体感知的口袋发现器
+        self.attn = nn.MultiheadAttention(hidden_dim, heads, batch_first=True)
+
+        # 3. 动态门控（基于交互后的上下文，而不是静态蛋白）
         self.gate = nn.Sequential(
             nn.Linear(hidden_dim, hidden_dim),
             nn.Sigmoid()
@@ -39,21 +43,14 @@ class StableSparseGatedCrossAttention(nn.Module):
         K = self.prot_proj(prot_feat)
         V = K
 
-        site_logits = self.site_scorer(prot_feat)
-        site_logits = site_logits.masked_fill(~prot_mask.unsqueeze(-1), -1e9)
-
-        tau = torch.clamp(self.tau, 0.1, 2.0)
-        site_prob = F.softmax(site_logits / tau, dim=1)
-
-        alpha = torch.clamp(self.alpha, 0.0, 5.0)
-        scaling = 1.0 + alpha * site_prob
-        V_enhanced = V * scaling
-
-        attn_out, _ = self.attn(
-            Q, K, V_enhanced,
+        # 🔥 核心修正：让药物 (Q) 去主动寻找靶点 (K/V)
+        # 注意力权重 attn_weights 本身就是最完美的、基于配体的 site_prob！
+        attn_out, attn_weights = self.attn(
+            Q, K, V,
             key_padding_mask=~prot_mask
         )
 
+        # 基于交互后产生的特征进行门控融合，彻底废除静态 site_scorer
         gate = self.gate(attn_out)
         out = gate * attn_out + Q
         out = self.norm(out)
