@@ -102,7 +102,12 @@ if __name__ == "__main__":
 
     # 🔥 3. 初始化模型与优化器
     model = DTAModel().to(device)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4, weight_decay=1e-4)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4, weight_decay=1e-3) # 甚至可以尝试 1e-2
+    # 监听 Val MSE，如果 15 轮没有下降，学习率砍半，强制模型进行微调而不是震荡
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer, mode='min', factor=0.5, patience=15, min_lr=1e-6
+    )
+
 
     # 🔥 4. 炼丹循环
     print(f"\n🚀 引擎点火！正在 {device} 上启动带早停机制的训练...")
@@ -122,6 +127,8 @@ if __name__ == "__main__":
         print(log_str)
         log_file.write(log_str + "\n")
         log_file.flush()
+        # 🔥 必须在这里取消注释！把实际算出来的 val_mse 传进去！
+        scheduler.step(val_mse)
 
         # 早停与保存
         if val_mse < best_val_mse:
