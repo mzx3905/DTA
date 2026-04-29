@@ -7,9 +7,12 @@ class AffinityPredictor(nn.Module):
         super().__init__()
         self.pool = nn.Linear(hidden_dim, 1)
         self.mlp = nn.Sequential(
-            nn.Linear(hidden_dim, 256),
-            nn.ReLU(),
-            nn.Dropout(0.1),
+            nn.Linear(hidden_dim, 512),
+            nn.GELU(),        # 替换老旧的 ReLU，提升梯度平滑度
+            nn.Dropout(0.4),  # 🔥 强制切断 40% 的全连接捷径
+            nn.Linear(512, 256),
+            nn.GELU(),
+            nn.Dropout(0.4),  # 🔥 再次进行 40% 的特征净化
             nn.Linear(256, 1)
         )
 
